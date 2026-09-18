@@ -1,0 +1,15 @@
+# Local IDE state
+.idea/
+
+# Local secrets and runtime overrides
+**/.env
+
+# Python caches
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# OS/editor leftovers
+.DS_Store
+Thumbs.db
+

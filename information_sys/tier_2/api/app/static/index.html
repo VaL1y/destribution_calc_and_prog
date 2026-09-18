@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Учебный модуль складского учёта с PostgreSQL-репликой">
+    <title>Контур — складской учёт</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">К</span>
+        <div>
+          <strong>Контур</strong>
+          <span>складской учёт</span>
+        </div>
+      </div>
+      <div class="db-status" aria-label="Состояние базы данных">
+        <span id="databaseStatus" class="status-pill pending">DATABASE · проверка</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="summary" aria-labelledby="pageTitle">
+        <div>
+          <p class="eyebrow">Оперативный остаток</p>
+          <h1 id="pageTitle">Склад</h1>
+          <p class="source">PostgreSQL · локальный учебный контур</p>
+        </div>
+        <div class="metrics" aria-label="Сводка">
+          <article><span>Позиций</span><strong id="productCount">—</strong></article>
+          <article><span>Единиц</span><strong id="unitCount">—</strong></article>
+          <article class="warning"><span>Ниже нормы</span><strong id="lowCount">—</strong></article>
+        </div>
+      </section>
+
+      <section class="toolbar" aria-label="Действия">
+        <button id="addProductButton" class="button primary">+ Новый товар</button>
+        <button id="addMovementButton" class="button">Приход / списание</button>
+        <button id="addCategoryButton" class="button ghost">+ Категория</button>
+        <button id="refreshButton" class="button icon" title="Обновить данные" aria-label="Обновить данные">↻</button>
+      </section>
+
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+      <section class="panel" aria-labelledby="productsTitle">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Номенклатура</p>
+            <h2 id="productsTitle">Товары и остатки</h2>
+          </div>
+          <span class="hint">Красным отмечен запас ниже нормы</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Наименование</th>
+                <th>Категория</th>
+                <th class="number">Остаток</th>
+                <th class="number">Мин.</th>
+                <th><span class="sr-only">Действия</span></th>
+              </tr>
+            </thead>
+            <tbody id="productsBody">
+              <tr><td colspan="6" class="empty">Загрузка…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel movements" aria-labelledby="movementsTitle">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Журнал</p>
+            <h2 id="movementsTitle">Последние операции</h2>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Время</th><th>Товар</th><th>Операция</th><th class="number">Количество</th><th>Комментарий</th></tr>
+            </thead>
+            <tbody id="movementsBody">
+              <tr><td colspan="5" class="empty">Загрузка…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="productDialog">
+      <form id="productForm" method="dialog">
+        <div class="dialog-heading">
+          <div><p class="eyebrow">Новая позиция</p><h2>Добавить товар</h2></div>
+          <button type="button" class="close" data-close-dialog aria-label="Закрыть">×</button>
+        </div>
+        <label>SKU<input name="sku" maxlength="40" placeholder="BOX-001" required></label>
+        <label>Наименование<input name="name" maxlength="160" placeholder="Короб архивный" required></label>
+        <div class="form-row">
+          <label>Категория<select name="category_id" id="productCategory" required></select></label>
+          <label>Единица<input name="unit" maxlength="20" value="шт." required></label>
+        </div>
+        <div class="form-row">
+          <label>Начальный остаток<input name="quantity" type="number" min="0" value="0" required></label>
+          <label>Минимальный запас<input name="reorder_level" type="number" min="0" value="5" required></label>
+        </div>
+        <div class="dialog-actions">
+          <button type="button" class="button ghost" data-close-dialog>Отмена</button>
+          <button type="submit" value="default" class="button primary">Добавить</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="movementDialog">
+      <form id="movementForm" method="dialog">
+        <div class="dialog-heading">
+          <div><p class="eyebrow">Изменение остатка</p><h2>Складская операция</h2></div>
+          <button type="button" class="close" data-close-dialog aria-label="Закрыть">×</button>
+        </div>
+        <label>Товар<select name="product_id" id="movementProduct" required></select></label>
+        <div class="form-row">
+          <label>Операция
+            <select name="movement_type"><option value="in">Приход</option><option value="out">Списание</option></select>
+          </label>
+          <label>Количество<input name="quantity" type="number" min="1" value="1" required></label>
+        </div>
+        <label>Комментарий<input name="note" maxlength="250" placeholder="Номер накладной или причина"></label>
+        <div class="dialog-actions">
+          <button type="button" class="button ghost" data-close-dialog>Отмена</button>
+          <button type="submit" value="default" class="button primary">Провести</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

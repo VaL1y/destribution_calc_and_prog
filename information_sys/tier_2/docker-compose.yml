@@ -1,0 +1,70 @@
+name: warehouse-demo
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-warehouse}
+      POSTGRES_USER: ${POSTGRES_USER:-warehouse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-warehouse}
+    command:
+      - postgres
+      - -c
+      - max_connections=${DB_MAX_CONNECTIONS:-40}
+      - -c
+      - shared_buffers=64MB
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+    deploy:
+      resources:
+        limits:
+          cpus: "${DB_CPU_LIMIT:-0.50}"
+          memory: "${DB_MEMORY_LIMIT:-256M}"
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-warehouse}:${POSTGRES_PASSWORD:-warehouse}@db:5432/${POSTGRES_DB:-warehouse}
+      API_WORKERS: ${API_WORKERS:-2}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-12}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-3}
+    command:
+      - sh
+      - -c
+      - exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers "$${API_WORKERS}" --no-access-log
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  locust:
+    image: locustio/locust:2.46.3
+    profiles: ["load"]
+    command: ["-f", "/mnt/locust/locustfile.py", "--host", "http://api:8000", "--class-picker"]
+    ports:
+      - "8089:8089"
+    volumes:
+      - ./load-tests:/mnt/locust:ro
+      - ./load-results:/results
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

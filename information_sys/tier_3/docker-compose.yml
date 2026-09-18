@@ -1,0 +1,176 @@
+name: warehouse-ha-lab
+
+x-postgres-common: &postgres-common
+  image: bitnamilegacy/postgresql-repmgr:17.6.0-debian-12-r2
+  restart: unless-stopped
+  networks:
+    - warehouse-cluster
+  environment: &postgres-environment
+    POSTGRESQL_DATABASE: ${POSTGRES_DB:-warehouse}
+    POSTGRESQL_USERNAME: ${POSTGRES_USER:-warehouse}
+    POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-warehouse_change_me}
+    POSTGRESQL_POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-postgres_change_me}
+    POSTGRESQL_NUM_SYNCHRONOUS_REPLICAS: "0"
+    POSTGRESQL_MAX_CONNECTIONS: "80"
+    REPMGR_USERNAME: repmgr
+    REPMGR_PASSWORD: ${REPMGR_PASSWORD:-repmgr_change_me}
+    REPMGR_PRIMARY_HOST: pg-1
+    REPMGR_PRIMARY_PORT: "5432"
+    REPMGR_PARTNER_NODES: pg-1,pg-2,pg-3
+    REPMGR_CONNECT_TIMEOUT: "2"
+    REPMGR_RECONNECT_ATTEMPTS: "3"
+    REPMGR_RECONNECT_INTERVAL: "2"
+    REPMGR_MASTER_RESPONSE_TIMEOUT: "5"
+    REPMGR_USE_REPLICATION_SLOTS: "1"
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-warehouse} -d ${POSTGRES_DB:-warehouse}"]
+    interval: 5s
+    timeout: 3s
+    retries: 30
+  deploy:
+    resources:
+      limits:
+        cpus: "${DB_CPU_LIMIT:-0.35}"
+        memory: "${DB_MEMORY_LIMIT:-256M}"
+
+services:
+  pg-1:
+    <<: *postgres-common
+    hostname: pg-1
+    environment:
+      <<: *postgres-environment
+      REPMGR_NODE_ID: "1"
+      REPMGR_NODE_NAME: pg-1
+      REPMGR_NODE_NETWORK_NAME: pg-1
+      REPMGR_NODE_PRIORITY: "300"
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_1_data:/bitnami/postgresql
+      - ../tier_2/postgres/init/01_init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./postgres/init/02_split_brain_demo.sql:/docker-entrypoint-initdb.d/02_split_brain_demo.sql:ro
+
+  pg-2:
+    <<: *postgres-common
+    hostname: pg-2
+    environment:
+      <<: *postgres-environment
+      REPMGR_NODE_ID: "2"
+      REPMGR_NODE_NAME: pg-2
+      REPMGR_NODE_NETWORK_NAME: pg-2
+      REPMGR_NODE_PRIORITY: "200"
+    ports:
+      - "5434:5432"
+    volumes:
+      - pg_2_data:/bitnami/postgresql
+
+  pg-3:
+    <<: *postgres-common
+    hostname: pg-3
+    environment:
+      <<: *postgres-environment
+      REPMGR_NODE_ID: "3"
+      REPMGR_NODE_NAME: pg-3
+      REPMGR_NODE_NETWORK_NAME: pg-3
+      REPMGR_NODE_PRIORITY: "100"
+    ports:
+      - "5435:5432"
+    volumes:
+      - pg_3_data:/bitnami/postgresql
+
+  api-remote:
+    image: warehouse-tier3-api:local
+    build:
+      context: ..
+      dockerfile: tier_3/api/Dockerfile
+    restart: unless-stopped
+    networks:
+      - warehouse-cluster
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-warehouse}
+      POSTGRES_USER: ${POSTGRES_USER:-warehouse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-warehouse_change_me}
+      APP_NODE: remote
+      DB_WRITE_HOSTS: pg-1,pg-2
+      DB_READ_HOSTS: pg-2,pg-1
+      DB_PORTS: 5432,5432
+      API_WORKERS: ${API_WORKERS:-2}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-12}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-3}
+    command:
+      - sh
+      - -c
+      - exec uvicorn tier3_main:app --host 0.0.0.0 --port 8000 --workers "$${API_WORKERS}" --no-access-log
+    ports:
+      - "8000:8000"
+    depends_on:
+      pg-1:
+        condition: service_healthy
+      pg-2:
+        condition: service_healthy
+      pg-3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  api-local:
+    image: warehouse-tier3-api:local
+    profiles: ["splitbrain"]
+    build:
+      context: ..
+      dockerfile: tier_3/api/Dockerfile
+    restart: unless-stopped
+    networks:
+      - warehouse-cluster
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-warehouse}
+      POSTGRES_USER: ${POSTGRES_USER:-warehouse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-warehouse_change_me}
+      APP_NODE: local
+      DB_WRITE_HOSTS: pg-3
+      DB_READ_HOSTS: pg-3
+      DB_PORTS: "5432"
+      API_WORKERS: "1"
+      DB_POOL_SIZE: "5"
+      DB_MAX_OVERFLOW: "2"
+    command:
+      - sh
+      - -c
+      - exec uvicorn tier3_main:app --host 0.0.0.0 --port 8000 --workers "$${API_WORKERS}" --no-access-log
+    ports:
+      - "8001:8000"
+    depends_on:
+      pg-3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  locust:
+    image: locustio/locust:2.46.3
+    profiles: ["load"]
+    networks:
+      - warehouse-cluster
+    command: ["-f", "/mnt/locust/locustfile.py", "--host", "http://api-remote:8000", "--class-picker"]
+    ports:
+      - "8089:8089"
+    volumes:
+      - ../tier_2/load-tests:/mnt/locust:ro
+      - ./load-results:/results
+    depends_on:
+      api-remote:
+        condition: service_healthy
+
+networks:
+  warehouse-cluster:
+    name: warehouse-tier3-net
+
+volumes:
+  pg_1_data:
+  pg_2_data:
+  pg_3_data:
