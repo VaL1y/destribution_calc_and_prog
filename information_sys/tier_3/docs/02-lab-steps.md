@@ -32,7 +32,8 @@ docker compose logs -f pg-1
 
 ```powershell
 docker compose exec pg-1 psql -U warehouse -d warehouse -c "select pg_is_in_recovery();"
-docker compose exec pg-1 repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
+docker compose exec pg-1 /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh \
+  repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
 ```
 
 На primary `pg_is_in_recovery()` возвращает `false`.
@@ -49,7 +50,8 @@ docker compose logs -f pg-2
 
 ```powershell
 docker compose exec pg-2 psql -U warehouse -d warehouse -c "select pg_is_in_recovery();"
-docker compose exec pg-1 repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
+docker compose exec pg-1 /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh \
+  repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
 ```
 
 На standby запрос возвращает `true`.
@@ -59,10 +61,17 @@ docker compose exec pg-1 repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster 
 ```powershell
 docker compose up -d pg-3
 docker compose logs -f pg-3
-docker compose exec pg-1 repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
+docker compose exec pg-1 /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh \
+  repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
 ```
 
 Ожидаем одну строку `primary` и две строки `standby`.
+
+Команда запускается через entrypoint образа намеренно: контейнер работает под
+числовым UID `1001`, а entrypoint подключает `nss_wrapper`, чтобы `repmgr` мог
+получить имя текущего системного пользователя. Прямой вызов `repmgr` может
+завершиться сообщением `could not get current user name: Success`, хотя сам
+PostgreSQL-кластер при этом исправен.
 
 ## Шаг 4. Увидеть физическую репликацию
 
