@@ -44,7 +44,7 @@ services:
       REPMGR_NODE_NETWORK_NAME: pg-1
       REPMGR_NODE_PRIORITY: "300"
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - pg_1_data:/bitnami/postgresql
       - ../tier_2/postgres/init/01_init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
@@ -60,7 +60,7 @@ services:
       REPMGR_NODE_NETWORK_NAME: pg-2
       REPMGR_NODE_PRIORITY: "200"
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - pg_2_data:/bitnami/postgresql
 
@@ -74,7 +74,7 @@ services:
       REPMGR_NODE_NETWORK_NAME: pg-3
       REPMGR_NODE_PRIORITY: "100"
     ports:
-      - "5435:5432"
+      - "127.0.0.1:5435:5432"
     volumes:
       - pg_3_data:/bitnami/postgresql
 
@@ -102,7 +102,7 @@ services:
       - -c
       - exec uvicorn tier3_main:app --host 0.0.0.0 --port 8000 --workers "$${API_WORKERS}" --no-access-log
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       pg-1:
         condition: service_healthy
@@ -141,7 +141,7 @@ services:
       - -c
       - exec uvicorn tier3_main:app --host 0.0.0.0 --port 8000 --workers "$${API_WORKERS}" --no-access-log
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     depends_on:
       pg-3:
         condition: service_healthy
@@ -158,7 +158,7 @@ services:
       - warehouse-cluster
     command: ["-f", "/mnt/locust/locustfile.py", "--host", "http://api-remote:8000", "--class-picker"]
     ports:
-      - "8089:8089"
+      - "127.0.0.1:8089:8089"
     volumes:
       - ../tier_2/load-tests:/mnt/locust:ro
       - ./load-results:/results
