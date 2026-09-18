@@ -67,6 +67,9 @@ services:
   pg-3:
     <<: *postgres-common
     hostname: pg-3
+    networks:
+      - warehouse-cluster
+      - local-branch
     environment:
       <<: *postgres-environment
       REPMGR_NODE_ID: "3"
@@ -124,7 +127,7 @@ services:
       dockerfile: tier_3/api/Dockerfile
     restart: unless-stopped
     networks:
-      - warehouse-cluster
+      - local-branch
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-warehouse}
       POSTGRES_USER: ${POSTGRES_USER:-warehouse}
@@ -169,6 +172,8 @@ services:
 networks:
   warehouse-cluster:
     name: warehouse-tier3-net
+  local-branch:
+    name: warehouse-tier3-local-branch
 
 volumes:
   pg_1_data:
