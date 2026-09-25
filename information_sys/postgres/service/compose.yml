@@ -1,0 +1,61 @@
+name: warehouse-postgres-service
+
+x-api-environment: &api-environment
+  POSTGRES_DB: ${POSTGRES_DB:-warehouse}
+  POSTGRES_USER: ${POSTGRES_USER:-warehouse}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-warehouse}
+  DB_WRITE_HOSTS: ${DB_WRITE_HOSTS:-pg-1}
+  DB_READ_HOSTS: ${DB_READ_HOSTS:-pg-1}
+  DB_PORTS: ${DB_PORTS:-5432}
+  DB_READ_TARGET: ${DB_READ_TARGET:-prefer-standby}
+  DB_POOL_SIZE: ${DB_POOL_SIZE:-12}
+  DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-3}
+  DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-3}
+  DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-2}
+  APP_NODE: ${APP_NODE:-service-1}
+
+services:
+  api:
+    build: .
+    image: warehouse-postgres-service:local
+    environment: *api-environment
+    command: >-
+      uvicorn app.main:app --host 0.0.0.0 --port 8000
+      --workers ${API_WORKERS:-2}
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    networks:
+      - database
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/status', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    image: warehouse-postgres-service:local
+    profiles: ["tools"]
+    environment: *api-environment
+    command: ["python", "scripts/migrate.py"]
+    networks:
+      - database
+
+  locust:
+    image: locustio/locust:2.46.3
+    profiles: ["load"]
+    command: -f /mnt/locust/locustfile.py --host http://api:8000
+    ports:
+      - "127.0.0.1:${LOCUST_PORT:-8089}:8089"
+    volumes:
+      - ./load-tests:/mnt/locust:ro
+      - ./load-results:/mnt/results
+    networks:
+      - database
+    depends_on:
+      - api
+
+networks:
+  database:
+    external: true
+    name: ${DB_NETWORK:-warehouse-lab}

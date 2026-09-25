@@ -13,3 +13,5 @@
 .DS_Store
 Thumbs.db
 
+# Local leftovers from the pre-refactor tier_2 load tests.
+information_sys/tier_2/

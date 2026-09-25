@@ -1,0 +1,82 @@
+name: warehouse-pg-tier3
+
+x-postgres-common: &postgres-common
+  image: bitnamilegacy/postgresql-repmgr:17.6.0-debian-12-r2
+  restart: unless-stopped
+  networks: [warehouse-cluster]
+  environment: &postgres-environment
+    POSTGRESQL_DATABASE: ${POSTGRES_DB:-warehouse}
+    POSTGRESQL_USERNAME: ${POSTGRES_USER:-warehouse}
+    POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-warehouse_change_me}
+    POSTGRESQL_POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-postgres_change_me}
+    POSTGRESQL_NUM_SYNCHRONOUS_REPLICAS: "0"
+    POSTGRESQL_MAX_CONNECTIONS: "80"
+    REPMGR_USERNAME: repmgr
+    REPMGR_PASSWORD: ${REPMGR_PASSWORD:-repmgr_change_me}
+    REPMGR_PRIMARY_HOST: pg-1
+    REPMGR_PRIMARY_PORT: "5432"
+    REPMGR_PARTNER_NODES: pg-1,pg-2,pg-3
+    REPMGR_CONNECT_TIMEOUT: "2"
+    REPMGR_RECONNECT_ATTEMPTS: "3"
+    REPMGR_RECONNECT_INTERVAL: "2"
+    REPMGR_MASTER_RESPONSE_TIMEOUT: "5"
+    REPMGR_USE_REPLICATION_SLOTS: "1"
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-warehouse} -d ${POSTGRES_DB:-warehouse}"]
+    interval: 5s
+    timeout: 3s
+    retries: 30
+  deploy:
+    resources:
+      limits:
+        cpus: "${DB_CPU_LIMIT:-0.35}"
+        memory: "${DB_MEMORY_LIMIT:-256M}"
+
+services:
+  pg-1:
+    <<: *postgres-common
+    hostname: pg-1
+    environment:
+      <<: *postgres-environment
+      REPMGR_NODE_ID: "1"
+      REPMGR_NODE_NAME: pg-1
+      REPMGR_NODE_NETWORK_NAME: pg-1
+      REPMGR_NODE_PRIORITY: "300"
+    ports: ["127.0.0.1:5433:5432"]
+    volumes: [pg_1_data:/bitnami/postgresql]
+
+  pg-2:
+    <<: *postgres-common
+    hostname: pg-2
+    environment:
+      <<: *postgres-environment
+      REPMGR_NODE_ID: "2"
+      REPMGR_NODE_NAME: pg-2
+      REPMGR_NODE_NETWORK_NAME: pg-2
+      REPMGR_NODE_PRIORITY: "200"
+    ports: ["127.0.0.1:5434:5432"]
+    volumes: [pg_2_data:/bitnami/postgresql]
+
+  pg-3:
+    <<: *postgres-common
+    hostname: pg-3
+    networks: [warehouse-cluster, local-branch]
+    environment:
+      <<: *postgres-environment
+      REPMGR_NODE_ID: "3"
+      REPMGR_NODE_NAME: pg-3
+      REPMGR_NODE_NETWORK_NAME: pg-3
+      REPMGR_NODE_PRIORITY: "100"
+    ports: ["127.0.0.1:5435:5432"]
+    volumes: [pg_3_data:/bitnami/postgresql]
+
+networks:
+  warehouse-cluster:
+    name: warehouse-tier3-net
+  local-branch:
+    name: warehouse-tier3-local-branch
+
+volumes:
+  pg_1_data:
+  pg_2_data:
+  pg_3_data:

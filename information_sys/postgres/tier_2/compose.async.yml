@@ -1,0 +1,67 @@
+name: warehouse-pg-tier2-async
+
+x-db-environment: &db-environment
+  POSTGRES_DB: ${POSTGRES_DB:-warehouse}
+  POSTGRES_USER: ${POSTGRES_USER:-warehouse}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-warehouse}
+  REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:-replication}
+
+services:
+  pg-primary:
+    build: ./postgres
+    environment: *db-environment
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - wal_keep_size=256MB
+      - -c
+      - synchronous_standby_names=
+    ports:
+      - "127.0.0.1:${PRIMARY_PORT:-15433}:5432"
+    volumes:
+      - primary_data:/var/lib/postgresql/data
+    networks:
+      warehouse-lab:
+        aliases: [pg-primary]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  pg-standby:
+    build: ./postgres
+    entrypoint: ["/usr/local/bin/standby-entrypoint.sh"]
+    environment:
+      <<: *db-environment
+      PRIMARY_HOST: pg-primary
+    ports:
+      - "127.0.0.1:${STANDBY_PORT:-15434}:5432"
+    volumes:
+      - standby_data:/var/lib/postgresql/data
+    networks:
+      warehouse-lab:
+        aliases: [pg-standby]
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  primary_data:
+  standby_data:
+
+networks:
+  warehouse-lab:
+    external: true
+    name: ${DB_NETWORK:-warehouse-lab}
