@@ -6,12 +6,13 @@
 
 ## Запуск с tier_1
 
-```powershell
+```cmd
+docker compose up -d --build api
+docker compose -f ..\tier_1\compose.yml up -d
 docker network create warehouse-lab
-docker compose -f ../tier_1/compose.yml up -d
-docker compose build
-docker compose --profile tools run --rm migrate
-docker compose up -d api
+docker network connect warehouse-lab warehouse-postgres-service-api-1
+docker network connect --alias pg-1 warehouse-lab warehouse-pg-tier1-pg-1-1
+docker compose exec api python scripts/migrate.py
 ```
 
 Интерфейс: <http://127.0.0.1:8000>. Статус: `GET /api/status`.
@@ -22,7 +23,7 @@ docker compose up -d api
 
 ```env
 DB_WRITE_HOSTS=pg-1,pg-2,pg-3
-DB_READ_HOSTS=pg-2,pg-3,pg-1
+DB_READ_HOSTS=pg-3,pg-2,pg-1
 DB_PORTS=5432
 ```
 
@@ -32,7 +33,7 @@ primary. Это маршрутизация клиента, а не механи�
 
 Нагрузочный интерфейс запускается командой:
 
-```powershell
+```cmd
 docker compose --profile load up -d locust
 ```
 

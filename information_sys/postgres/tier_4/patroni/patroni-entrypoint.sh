@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-data_dir="${PATRONI_POSTGRESQL_DATA_DIR:-/var/lib/postgresql/patroni}"
+data_dir="${PATRONI_POSTGRESQL_DATA_DIR:-/var/lib/postgresql/patroni/data}"
 
 if [ "$(id -u)" = "0" ]; then
     mkdir -p "$data_dir" /var/run/postgresql
@@ -10,4 +10,3 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 exec "$@"
-

@@ -1,0 +1,30 @@
+name: warehouse-tier4-witness
+
+services:
+  zk-3:
+    image: zookeeper:3.9.5-jre-17
+    restart: unless-stopped
+    hostname: zk-3
+    environment:
+      ZOO_MY_ID: 3
+      ZOO_SERVERS: "server.1=${REMOTE_HOST}:${ZK1_PEER_PORT:-2888}:${ZK1_ELECTION_PORT:-3888};${ZK1_CLIENT_PORT:-2181} server.2=${LOCAL_HOST}:${ZK2_PEER_PORT:-2888}:${ZK2_ELECTION_PORT:-3888};${ZK2_CLIENT_PORT:-2181} server.3=${WITNESS_HOST}:${ZK3_PEER_PORT:-2888}:${ZK3_ELECTION_PORT:-3888};${ZK3_CLIENT_PORT:-2181}"
+      ZOO_4LW_COMMANDS_WHITELIST: ruok,srvr,mntr,conf
+      ZOO_AUTOPURGE_PURGEINTERVAL: 1
+      ZOO_AUTOPURGE_SNAPRETAINCOUNT: 3
+      ZOO_CFG_EXTRA: quorumListenOnAllIPs=true
+    ports:
+      - "${ZK3_CLIENT_PORT:-2181}:${ZK3_CLIENT_PORT:-2181}"
+      - "${ZK3_PEER_PORT:-2888}:${ZK3_PEER_PORT:-2888}"
+      - "${ZK3_ELECTION_PORT:-3888}:${ZK3_ELECTION_PORT:-3888}"
+    volumes:
+      - zk3_data:/data
+      - zk3_log:/datalog
+    healthcheck:
+      test: ["CMD-SHELL", "zkServer.sh status >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 4s
+      retries: 30
+
+volumes:
+  zk3_data:
+  zk3_log:

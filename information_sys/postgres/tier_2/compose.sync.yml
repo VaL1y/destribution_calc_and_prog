@@ -27,7 +27,7 @@ services:
     volumes:
       - primary_data:/var/lib/postgresql/data
     networks:
-      warehouse-lab:
+      database:
         aliases: [pg-primary]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
@@ -46,7 +46,7 @@ services:
     volumes:
       - standby_data:/var/lib/postgresql/data
     networks:
-      warehouse-lab:
+      database:
         aliases: [pg-standby]
     depends_on:
       pg-primary:
@@ -62,6 +62,5 @@ volumes:
   standby_data:
 
 networks:
-  warehouse-lab:
-    external: true
-    name: ${DB_NETWORK:-warehouse-lab}
+  database:
+    name: warehouse-tier2-sync-internal

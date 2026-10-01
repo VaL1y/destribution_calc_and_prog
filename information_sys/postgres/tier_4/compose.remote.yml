@@ -1,7 +1,7 @@
 name: warehouse-tier4-remote
 
 x-zookeeper-environment: &zookeeper-environment
-  ZOO_SERVERS: "server.1=${REMOTE_HOST}:${ZK1_PEER_PORT:-2888}:${ZK1_ELECTION_PORT:-3888};${ZK1_CLIENT_PORT:-2181} server.2=${REMOTE_HOST}:${ZK2_PEER_PORT:-2889}:${ZK2_ELECTION_PORT:-3889};${ZK2_CLIENT_PORT:-2182} server.3=${LOCAL_HOST}:${ZK3_PEER_PORT:-2888}:${ZK3_ELECTION_PORT:-3888};${ZK3_CLIENT_PORT:-2181}"
+  ZOO_SERVERS: "server.1=${REMOTE_HOST}:${ZK1_PEER_PORT:-2888}:${ZK1_ELECTION_PORT:-3888};${ZK1_CLIENT_PORT:-2181} server.2=${LOCAL_HOST}:${ZK2_PEER_PORT:-2888}:${ZK2_ELECTION_PORT:-3888};${ZK2_CLIENT_PORT:-2181} server.3=${WITNESS_HOST}:${ZK3_PEER_PORT:-2888}:${ZK3_ELECTION_PORT:-3888};${ZK3_CLIENT_PORT:-2181}"
   ZOO_4LW_COMMANDS_WHITELIST: ruok,srvr,mntr,conf
   ZOO_AUTOPURGE_PURGEINTERVAL: 1
   ZOO_AUTOPURGE_SNAPRETAINCOUNT: 3
@@ -9,10 +9,10 @@ x-zookeeper-environment: &zookeeper-environment
 
 x-patroni-environment: &patroni-environment
   PATRONI_SCOPE: ${CLUSTER_NAME:-warehouse-tier4}
-  PATRONI_POSTGRESQL_DATA_DIR: /var/lib/postgresql/patroni
+  PATRONI_POSTGRESQL_DATA_DIR: /var/lib/postgresql/patroni/data
   PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
   PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
-  PATRONI_ZOOKEEPER_HOSTS: "'${REMOTE_HOST}:${ZK1_CLIENT_PORT:-2181}','${REMOTE_HOST}:${ZK2_CLIENT_PORT:-2182}','${LOCAL_HOST}:${ZK3_CLIENT_PORT:-2181}'"
+  PATRONI_ZOOKEEPER_HOSTS: "'${REMOTE_HOST}:${ZK1_CLIENT_PORT:-2181}','${LOCAL_HOST}:${ZK2_CLIENT_PORT:-2181}','${WITNESS_HOST}:${ZK3_CLIENT_PORT:-2181}'"
   PATRONI_SUPERUSER_USERNAME: ${POSTGRES_SUPERUSER:-postgres}
   PATRONI_SUPERUSER_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
   PATRONI_REPLICATION_USERNAME: ${POSTGRES_REPLICATION_USER:-replicator}
@@ -28,7 +28,7 @@ x-patroni-service: &patroni-service
   restart: unless-stopped
   environment: *patroni-environment
   healthcheck:
-    test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 || exit 1"]
+    test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_SUPERUSER:-postgres} -d postgres || exit 1"]
     interval: 5s
     timeout: 3s
     retries: 30
@@ -54,26 +54,6 @@ services:
       timeout: 4s
       retries: 30
 
-  zk-2:
-    image: zookeeper:3.9.5-jre-17
-    restart: unless-stopped
-    hostname: zk-2
-    environment:
-      <<: *zookeeper-environment
-      ZOO_MY_ID: 2
-    ports:
-      - "${ZK2_CLIENT_PORT:-2182}:${ZK2_CLIENT_PORT:-2182}"
-      - "${ZK2_PEER_PORT:-2889}:${ZK2_PEER_PORT:-2889}"
-      - "${ZK2_ELECTION_PORT:-3889}:${ZK2_ELECTION_PORT:-3889}"
-    volumes:
-      - zk2_data:/data
-      - zk2_log:/datalog
-    healthcheck:
-      test: ["CMD-SHELL", "zkServer.sh status >/dev/null 2>&1"]
-      interval: 5s
-      timeout: 4s
-      retries: 30
-
   pg-1:
     <<: *patroni-service
     environment:
@@ -88,8 +68,6 @@ services:
       - pg1_data:/var/lib/postgresql/patroni
     depends_on:
       zk-1:
-        condition: service_healthy
-      zk-2:
         condition: service_healthy
 
   pg-2:
@@ -107,13 +85,9 @@ services:
     depends_on:
       zk-1:
         condition: service_healthy
-      zk-2:
-        condition: service_healthy
 
 volumes:
   zk1_data:
   zk1_log:
-  zk2_data:
-  zk2_log:
   pg1_data:
   pg2_data:

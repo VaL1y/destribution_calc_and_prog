@@ -1,0 +1,263 @@
+
+И так, посмотрим на распределенные системы хранения данных на примере postgres.
+В начале, когда мы только строим проект, нам достаточно отделить приложение от БД,
+тогда это уже поможет нам лучше обрабатывать ошибки падения бд.
+Вот например у нас есть сервис фаст апи
+* показываю код main и db
+простой сервис на фаст апи, который управляет складским учетом, то есть не реализует сложной логики.
+Просто несколько эндпоинтов с шаблонным отображением страниц.
+Подключение к БД выполняется здесь, оно относительно универсальное для каждого из вариантов экспериментов.
+Сервис создает отдельные пулы SQLAlchemy для чтения и записи, а драйвер PostgreSQL перебирает переданный список адресов и через target_session_attrs выбирает writable primary для записи либо предпочитает standby для чтения.
+Все это собрано в докер и затем в докер компоузе разворачиваются апи, локуст для проверки нагрузки и
+Миграция вынесена в отдельный сервис Compose с профилем tools, поэтому она не запускается вместе с обычным приложением; в этом сценарии после ручного подключения сети мы запускаем тот же скрипт внутри уже работающего контейнера API командой docker compose exec.
+
+Сейчас мы можем запустить наше приложение
+```cmd
+cd /d C:\destribution_calc_and_prog\information_sys\postgres
+docker compose -f service\compose.yml up -d --build api
+docker compose -f service\compose.yml ps
+```
+и посмотреть что у нас есть
+*показываю страницу в браузере.
+Кажется отображается ошибка, это очевидно из-за того, что у нас не работает БД.
+```cmd
+cd /d C:\destribution_calc_and_prog\information_sys\postgres
+docker compose -f tier_1\compose.yml up -d
+docker compose -f tier_1\compose.yml ps
+```
+Теперь мы видим, что бд поднялась. Кстати это просто один экземпляр, без каких-то дополнений.
+*показываю компоуз.
+*перехожу в страницу и все еще ошибка.
+Да, мы подняли контейнеры, но для удобства управления и демонстрации не стал объединять их сетью по дефолту, сделаем это вручную.
+```cmd
+docker network create warehouse-lab
+docker network connect warehouse-lab warehouse-postgres-service-api-1
+docker network connect --alias pg-1 warehouse-lab warehouse-pg-tier1-pg-1-1
+docker compose -f service\compose.yml exec api python scripts/migrate.py
+curl http://127.0.0.1:8000/api/status
+```
+*перехожу и показываю
+Вот теперь все заработало, мы не видим ошибку, можем поработать с остатками и прочим.
+*показал что все работает.
+
+Дальше, давайте сделаем реплику для нашей БД.
+создадим мыстер ноду и реплику средствами постгрес. Будем записывать в мастер, а читать из мастер и реплики.
+В идеале мы ходим уменьшить простой в случае падения мастера.
+*показываю компоуз tier-2
+Тут мы видим что означает CA по cap теореме. Средствами только постгреса мы не можем пока что переключить реплику в режим мастера чтобы не создавать простои,
+однако реплика все еще поможет нам быстро переподняться.
+Такая реплика полезна и без автоматического переключения: она поддерживает почти готовую копию данных, позволяет читать с hot standby, выполнять плановые переключения и намного быстрее восстановить работу ручным promotion, чем разворачивать backup с нуля; при этом реплика не является резервной копией и сама не решает, кого безопасно сделать новым primary.
+```cmd
+docker network disconnect warehouse-lab warehouse-postgres-service-api-1
+docker network disconnect warehouse-lab warehouse-pg-tier1-pg-1-1
+docker compose -f tier_1\compose.yml down
+docker compose -f tier_2\compose.async.yml up -d --build
+docker network connect warehouse-lab warehouse-postgres-service-api-1
+docker network connect --alias pg-1 warehouse-lab warehouse-pg-tier2-async-pg-primary-1
+docker network connect --alias pg-2 warehouse-lab warehouse-pg-tier2-async-pg-standby-1
+docker compose -f service\compose.yml exec api python scripts/migrate.py
+docker compose -f tier_2\compose.async.yml exec pg-primary psql -U warehouse -d warehouse -c "select application_name,state,sync_state from pg_stat_replication;"
+```
+*показываю, что все снова работает.
+Теперь попробуем остановить контейнер реплики и посмотрим что будет.
+```cmd
+docker compose -f tier_2\compose.async.yml stop pg-standby
+curl http://127.0.0.1:8000/api/status
+```
+*показываю что все работает все еще
+```cmd
+docker compose -f tier_2\compose.async.yml start pg-standby
+
+docker compose -f tier_2\compose.async.yml stop pg-primary
+curl http://127.0.0.1:8000/api/status
+curl http://127.0.0.1:8000/api/demo/read-node
+```
+*показываю результат
+Чтение со standby продолжит работать, но запись завершится ошибкой, потому что чистый PostgreSQL не выполняет автоматический failover; после ручного promotion бывший standby станет writable и приложение найдет его в том же списке адресов.
+```cmd
+docker compose -f tier_2\compose.async.yml exec -u postgres pg-standby pg_ctl -D /var/lib/postgresql/data promote
+
+curl http://127.0.0.1:8000/api/status
+curl http://127.0.0.1:8000/api/demo/node
+```
+
+Хорошо. Теперь посмотрим, как мы можем модифицировать поведение.
+Используем набор инструментов постгреса repmgr. Она поможет нам автоматически управлять поведением бд.
+Немного усложним этот эксперимент. Введем мастер и две реплики, будто у нас есть 2 ЦОДа связанных, на одном лежит мастер и реплика, на другом только реплика.
+```cmd
+docker network disconnect warehouse-lab warehouse-postgres-service-api-1
+docker network disconnect warehouse-lab warehouse-pg-tier2-async-pg-primary-1
+docker network disconnect warehouse-lab warehouse-pg-tier2-async-pg-standby-1
+docker compose -f tier_2\compose.async.yml down
+```
+Посмотрим что у нас есть в компоузе.
+Общий YAML-блок задает образ и параметры, одинаковые для трех нод: данные приложения, пароль repmgr, начальный primary и список участников; у каждой ноды отдельно заданы уникальные ID, имя и сетевой адрес. REPMGR_NODE_PRIORITY не обязателен, но делает выборы предсказуемыми, а REPMGR_USE_PGREWIND и data-checksums нужны выбранному нами возврату старого primary через pg_rewind; healthcheck, ports, volumes и restart относятся только к эксплуатации Docker и саму репликацию не создают.
+То есть у нас есть мастер, реплика, и еще одна реплика связанная сетью с мастером.
+Теперь настроим это.
+```cmd
+docker compose -f tier_3\compose.yml down -v
+docker compose -f tier_3\compose.yml up -d --wait
+docker network connect warehouse-tier3-net warehouse-postgres-service-api-1
+docker compose -f service\compose.yml exec api python scripts/migrate.py
+docker compose -f tier_3\compose.yml exec pg-1 repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
+```
+*показываю что все работает штатно.
+Попробуем теперь отключить мастер
+```cmd
+docker compose -f tier_3\compose.yml stop pg-1
+
+docker compose -f tier_3\compose.yml exec pg-2 repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
+curl http://127.0.0.1:8000/api/status
+curl http://127.0.0.1:8000/api/demo/node
+```
+Видно, что достаточно быстро кластер автоматически реконфигурировался и продолжил работать.
+*показываю, что приложение работает.
+```cmd
+docker compose -f tier_3\compose.yml start pg-1
+
+docker compose -f tier_3\compose.yml exec pg-2 repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
+REM Перед отдельным опытом split brain возвращаем чистое исходное состояние с pg-1 как primary.
+docker network disconnect warehouse-tier3-net warehouse-postgres-service-api-1
+docker compose -f tier_3\compose.yml down -v
+docker compose -f tier_3\compose.yml up -d --wait
+docker network connect warehouse-tier3-net warehouse-postgres-service-api-1
+docker compose -f service\compose.yml exec api python scripts/migrate.py
+```
+Теперь посмотрим, что такое split brain.
+Запустим еще один экземпляр сервиса и создадим для него отдельную сеть.
+```cmd
+set "API_PORT=8001"
+set "APP_NODE=local"
+docker compose -p warehouse-local -f service\compose.yml up -d --build api
+set "API_PORT="
+set "APP_NODE="
+docker network connect warehouse-tier3-local-branch warehouse-local-api-1
+docker network connect warehouse-tier3-net warehouse-local-api-1
+curl http://127.0.0.1:8001/api/status
+```
+```cmd
+docker network disconnect warehouse-tier3-net warehouse-pg-tier3-pg-3-1
+docker network disconnect warehouse-tier3-net warehouse-local-api-1
+docker compose -f tier_3\compose.yml exec pg-3 repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
+
+```
+docker network connect warehouse-tier3-net warehouse-pg-tier3-pg-3-1
+docker network connect warehouse-tier3-local-branch warehouse-pg-tier3-pg-2-1
+docker network disconnect warehouse-tier3-net warehouse-pg-tier3-pg-2-1
+docker network disconnect warehouse-tier3-local-branch warehouse-pg-tier3-pg-3-1
+
+docker ps --format "table {{.Names}}\t{{.Networks}}"
+
+
+```
+* Показываю, что оба сервиса работают и добавляются разные не консистентные данные.
+```cmd
+docker compose -f tier_3\compose.yml exec pg-1 repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
+docker compose -f tier_3\compose.yml exec pg-2 repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
+curl http://127.0.0.1:8000/api/demo/events
+curl http://127.0.0.1:8001/api/demo/events
+
+docker network connect warehouse-tier3-net warehouse-pg-tier3-pg-2-1
+timeout /t 20 /nobreak
+docker compose -f tier_3\compose.yml exec pg-1 repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
+docker compose -f tier_3\compose.yml exec pg-2 repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
+
+REM Выбираем ветку pg-1 + pg-3 победителем. Перезапуск pg-2 запускает возврат через pg_rewind или повторное клонирование.
+docker compose -f tier_3\compose.yml restart pg-2
+timeout /t 30 /nobreak
+docker compose -f tier_3\compose.yml exec pg-1 repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
+docker network connect warehouse-tier3-net warehouse-local-api-1
+curl http://127.0.0.1:8000/api/demo/events
+curl http://127.0.0.1:8001/api/demo/events
+```
+После восстановления сети два primary обнаружили друг друга, но PostgreSQL и repmgr не объединили timelines и данные автоматически. Это видно по разному выводу cluster show: ветка pg-1 + pg-3 считает pg-2 неактивным старым primary, а pg-2 хранит старую версию метаданных.
+Для учебного восстановления применяется политика winner-takes-all: ветка pg-1 + pg-3 остается источником истины, а pg-2 возвращается как standby через pg_rewind или повторное клонирование. События, записанные только в проигравший pg-2 после разделения, теряются. Если их требуется сохранить, перед rejoin нужна отдельная прикладная процедура экспорта, проверки конфликтов и импорта; физическая репликация этого не делает.
+
+*показываю, что после rejoin оба интерфейса снова видят одну ветку данных.
+
+Хорошо, мы посмотрели почему сплитбрейн это плохо. Как с этим бороться?
+В этом нам помогает "кворум". По сути это система голосования, которая помогает определить, какая часть распределенной системы имеет право сохранить или выбрать primary.
+Реализовать согласованное голосование нам поможет ZooKeeper: он хранит небольшое состояние кластера и лидерскую блокировку, но складские данные в нем не находятся.
+etcd является альтернативным DCS с похожей ролью; здесь используется ZooKeeper, чтобы отдельно рассмотреть его ансамбль и правило большинства.
+И так, теперь рядом с каждой PostgreSQL-нодой у нас будет находиться Patroni — процесс, который запускает и контролирует PostgreSQL, проверяет лидерскую блокировку в DCS, выполняет promotion и возвращает старый primary как replica.
+ZooKeeper располагается независимо: один голос в первом ЦОД, один во втором и третий голос на отдельной witness-площадке.
+*показываю компоуз tier-4: compose.remote.yml, compose.local.yml и compose.witness.yml
+В первом ЦОД находятся pg-1, pg-2 и ZooKeeper-1, во втором — pg-3 и ZooKeeper-2, а на третьей площадке только ZooKeeper-3. Для решения нужны два голоса из трех, поэтому отказ любого одного ЦОД оставляет quorum, а изолированная площадка с одним голосом не может создать второй primary. В Patroni обязательны имя кластера и ноды, адреса PostgreSQL и REST API, каталог данных, учетные данные репликации и список DCS; ttl, loop_wait, retry_timeout, maximum_lag_on_failover и use_pg_rewind задают выбранную политику и скорость failover.
+```cmd
+docker network disconnect warehouse-tier3-net warehouse-postgres-service-api-1
+docker network disconnect warehouse-tier3-net warehouse-local-api-1
+docker network disconnect warehouse-tier3-local-branch warehouse-local-api-1
+docker compose -f tier_3\compose.yml down
+
+REM Проверяем три Compose-файла с единым tier_4\.env.
+docker compose --env-file tier_4\.env -f tier_4\compose.remote.yml config --quiet
+docker compose --env-file tier_4\.env -f tier_4\compose.local.yml config --quiet
+docker compose --env-file tier_4\.env -f tier_4\compose.witness.yml config --quiet
+
+REM Сначала запускаем все три голоса ZooKeeper. Поодиночке они не образуют quorum.
+docker compose --env-file tier_4\.env -f tier_4\compose.remote.yml up -d zk-1
+docker compose --env-file tier_4\.env -f tier_4\compose.local.yml up -d zk-2
+docker compose --env-file tier_4\.env -f tier_4\compose.witness.yml up -d zk-3
+timeout /t 20 /nobreak
+
+docker compose --env-file tier_4\.env -f tier_4\compose.remote.yml ps
+docker compose --env-file tier_4\.env -f tier_4\compose.local.yml ps
+docker compose --env-file tier_4\.env -f tier_4\compose.witness.yml ps
+
+REM Только после появления ZooKeeper quorum запускаем Patroni/PostgreSQL.
+docker compose --env-file tier_4\.env -f tier_4\compose.remote.yml up -d --build pg-1 pg-2
+docker compose --env-file tier_4\.env -f tier_4\compose.local.yml up -d --build pg-3
+timeout /t 30 /nobreak
+
+docker compose --env-file tier_4\.env -f tier_4\compose.remote.yml exec pg-1 patronictl -c /etc/patroni/patroni.yml list
+
+docker network create warehouse-tier4-app
+docker network connect warehouse-tier4-app warehouse-postgres-service-api-1
+docker network connect warehouse-tier4-app warehouse-local-api-1
+docker network connect --alias pg-1 warehouse-tier4-app warehouse-tier4-remote-pg-1-1
+docker network connect --alias pg-2 warehouse-tier4-app warehouse-tier4-remote-pg-2-1
+docker network connect --alias pg-3 warehouse-tier4-app warehouse-tier4-local-pg-3-1
+docker compose -f service\compose.yml exec api python scripts/migrate.py
+curl http://127.0.0.1:8000/api/status
+curl http://127.0.0.1:8001/api/status
+```
+*показываю что сервисы работают.
+На одной машине мы имитируем потерю площадок остановкой их контейнеров; настоящее направленное разделение сети позже выполняется firewall или отключением межсерверного VPN.
+Сначала имитируем полный отказ первого ЦОД: во втором ЦОД и на witness остаются два голоса, поэтому pg-3 может автоматически стать Leader.
+```cmd
+docker compose --env-file tier_4\.env -f tier_4\compose.remote.yml stop pg-1 pg-2 zk-1
+timeout /t 30 /nobreak
+
+docker compose --env-file tier_4\.env -f tier_4\compose.local.yml exec pg-3 patronictl -c /etc/patroni/patroni.yml list
+curl http://127.0.0.1:8000/api/status
+curl http://127.0.0.1:8001/api/status
+```
+Возвращаем первый ЦОД; его PostgreSQL-ноды должны присоединиться к pg-3 как replica, а не стать вторым primary.
+```cmd
+docker compose --env-file tier_4\.env -f tier_4\compose.remote.yml start zk-1
+timeout /t 15 /nobreak
+docker compose --env-file tier_4\.env -f tier_4\compose.remote.yml start pg-1 pg-2
+timeout /t 30 /nobreak
+
+docker compose --env-file tier_4\.env -f tier_4\compose.local.yml exec pg-3 patronictl -c /etc/patroni/patroni.yml list
+```
+Теперь проверяем защиту от split brain: выключаем witness и еще один голос, после чего остается 1/3 и Patroni должен остановить запись, а не создать новый primary.
+```cmd
+docker compose --env-file tier_4\.env -f tier_4\compose.witness.yml stop zk-3
+docker compose --env-file tier_4\.env -f tier_4\compose.remote.yml stop zk-1
+timeout /t 30 /nobreak
+
+curl http://127.0.0.1:8000/api/status
+docker compose --env-file tier_4\.env -f tier_4\compose.local.yml exec pg-3 patronictl -c /etc/patroni/patroni.yml list
+```
+Восстанавливаем quorum, после чего выбирается ровно один Leader.
+```cmd
+docker compose --env-file tier_4\.env -f tier_4\compose.remote.yml start zk-1
+docker compose --env-file tier_4\.env -f tier_4\compose.witness.yml start zk-3
+timeout /t 30 /nobreak
+
+docker compose --env-file tier_4\.env -f tier_4\compose.local.yml exec pg-3 patronictl -c /etc/patroni/patroni.yml list
+curl http://127.0.0.1:8000/api/status
+```
+
+Для реальной системы полезно отдельно замерить RTO от падения Leader до первой успешной записи, RPO по последней подтвержденной складской операции, задержку WAL на удаленной replica, маршрутизацию чтения через /api/demo/read-node, возврат старого primary, поведение при отказе witness и восстановление из backup/PITR, потому что реплика не защищает от ошибочного удаления или логической порчи данных.

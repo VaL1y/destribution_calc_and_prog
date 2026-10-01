@@ -7,8 +7,7 @@
 
 ## Асинхронный режим
 
-```powershell
-docker network create warehouse-lab
+```cmd
 docker compose -f compose.async.yml up -d --build
 docker compose -f compose.async.yml exec pg-primary psql -U warehouse -d warehouse -c "select application_name,state,sync_state from pg_stat_replication;"
 ```
@@ -16,10 +15,13 @@ docker compose -f compose.async.yml exec pg-primary psql -U warehouse -d warehou
 Для сервиса используйте:
 
 ```env
-DB_WRITE_HOSTS=pg-primary
-DB_READ_HOSTS=pg-standby,pg-primary
+DB_WRITE_HOSTS=pg-1,pg-2,pg-3
+DB_READ_HOSTS=pg-3,pg-2,pg-1
 DB_PORTS=5432
 ```
+
+Для демонстрации приложение и контейнеры БД вручную подключаются к общей сети;
+primary получает alias `pg-1`, standby — `pg-2`.
 
 Если остановить standby, primary продолжит подтверждать запись. Это высокая
 доступность записи на стороне primary, но последние WAL могут быть потеряны при
@@ -27,7 +29,7 @@ DB_PORTS=5432
 
 ## Синхронный режим
 
-```powershell
+```cmd
 docker compose -f compose.sync.yml up -d --build
 ```
 
@@ -44,7 +46,7 @@ SELECT работает, соединения создаются, но COMMIT о
 
 ## Проверка ролей
 
-```powershell
+```cmd
 docker compose -f compose.async.yml exec pg-primary psql -U warehouse -d warehouse -c "select pg_is_in_recovery();"
 docker compose -f compose.async.yml exec pg-standby psql -U warehouse -d warehouse -c "select pg_is_in_recovery();"
 ```

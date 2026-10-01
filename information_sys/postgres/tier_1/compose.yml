@@ -24,7 +24,7 @@ services:
     volumes:
       - pg_1_data:/var/lib/postgresql/data
     networks:
-      warehouse-lab:
+      database:
         aliases: [pg-1]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
@@ -42,6 +42,5 @@ volumes:
   pg_1_data:
 
 networks:
-  warehouse-lab:
-    external: true
-    name: ${DB_NETWORK:-warehouse-lab}
+  database:
+    name: warehouse-tier1-internal

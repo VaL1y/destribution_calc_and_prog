@@ -15,13 +15,13 @@ from .db import engine, read_engine
 BASE_DIR = Path(__file__).resolve().parent
 
 app = FastAPI(
-    title="Мини-склад API",
-    description="Учебный CRUD для PostgreSQL с ограниченными ресурсами.",
+    title="склад API",
+    description="CRUD для PostgreSQL.",
     version="1.0.0",
 )
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
-from .demo import router as demo_router  # noqa: E402
+from .demo import router as demo_router
 
 app.include_router(demo_router)
 

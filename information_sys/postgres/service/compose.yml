@@ -4,8 +4,8 @@ x-api-environment: &api-environment
   POSTGRES_DB: ${POSTGRES_DB:-warehouse}
   POSTGRES_USER: ${POSTGRES_USER:-warehouse}
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-warehouse}
-  DB_WRITE_HOSTS: ${DB_WRITE_HOSTS:-pg-1}
-  DB_READ_HOSTS: ${DB_READ_HOSTS:-pg-1}
+  DB_WRITE_HOSTS: ${DB_WRITE_HOSTS:-pg-1,pg-2,pg-3}
+  DB_READ_HOSTS: ${DB_READ_HOSTS:-pg-3,pg-2,pg-1}
   DB_PORTS: ${DB_PORTS:-5432}
   DB_READ_TARGET: ${DB_READ_TARGET:-prefer-standby}
   DB_POOL_SIZE: ${DB_POOL_SIZE:-12}
@@ -57,5 +57,3 @@ services:
 
 networks:
   database:
-    external: true
-    name: ${DB_NETWORK:-warehouse-lab}
